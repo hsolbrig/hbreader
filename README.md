@@ -1,8 +1,8 @@
 <div style="text-align: center; color: darkred"> <h1>Honey Badger Reader Don't Care</h1> </div>
 
-![Test](https://github.com/hsolbrig/hbreader/workflows/test/badge.svg)
-[![Pyversions](https://img.shields.io/pypi/pyversions/hbreader.svg)](https://pypi.python.org/pypi/hbreader)
-[![PyPi](https://img.shields.io/pypi/v/hbreader.svg)](https://pypi.python.org/pypi/hbreader)
+![Test](https://github.com/hsolbrig/hbreader/workflows/Test/badge.svg)
+![Pyversions](https://img.shields.io/pypi/pyversions/hbreader.svg)
+![PyPi](https://img.shields.io/pypi/v/hbreader.svg)
 
 
 **<span style="color: darkred">HBReader</span>** is a toolkit for those of us who are tired of having to use one idiom 
