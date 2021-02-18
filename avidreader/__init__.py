@@ -3,12 +3,13 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from io import StringIO
-from typing import Union, Optional, Callable, IO, Any
+from typing import Union, Optional, Callable, IO, Any, TextIO
 from urllib.error import HTTPError
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit, quote
 from urllib.request import Request, urlopen
 
 __all__ = ['FileInfo', 'default_str_tester', 'avid_open', 'avid_read']
+
 
 @dataclass
 class FileInfo:
@@ -17,9 +18,17 @@ class FileInfo:
     source_file_size: Optional[int] = None
     base_path: Optional[str] = None
 
+    def __post_init__(self):
+        self._locked = True
+
     def clear(self) -> 'FileInfo':
         self.source_file = self.source_file_date = self.source_file_size = self.base_path = None
         return self
+
+    def __setattr__(self, key, value):
+        if getattr(self, '_locked', False) and key not in self.__dict__:
+            raise AttributeError(f'No {key} variable')
+        return super().__setattr__(key, value)
 
 
 def default_str_tester(s: str) -> bool:
@@ -58,13 +67,13 @@ def _try_stringify(source: Union[str, bytes, bytearray, IO],
     return str(source)
 
 
-
 @contextmanager
 def avid_open(source: Union[str, IO],
               open_info: Optional[FileInfo] = None,
               base_path: Optional[str] = None,
               accept_header: Optional[str] = None,
-              is_actual_data: Optional[Callable[[str], bool]] = default_str_tester ):
+              is_actual_data: Optional[Callable[[str], bool]] = default_str_tester,
+              read_codec: str = 'utf-8') -> TextIO:
     """
     Return an open IO representation of source
     :param source: anything that can be construed to be a string, a URL, a file name or an open file handle
@@ -72,6 +81,7 @@ def avid_open(source: Union[str, IO],
     :param base_path: Base to use if source is a relative URL or file name
     :param accept_header: Accept header to use if it turns out to be a URL
     :param is_actual_data: Function to differentiate plain text from URL or file name
+    :param read_codec: Name of codec to use if bytes being read (default = 'utf-8'). (URL only)
     :return: File like representation of source
     """
     source_as_str = _try_stringify(source, is_actual_data)
@@ -92,7 +102,7 @@ def avid_open(source: Union[str, IO],
             # source is a URL
             url = source if '://' in source else urljoin(base_path + ('' if base_path.endswith('/') else '/'),
                                                          source, allow_fragments=True)
-            req = Request(url)
+            req = Request(quote(url, '/:'))
             if accept_header:
                 req.add_header("Accept", accept_header)
             try:
@@ -103,15 +113,17 @@ def avid_open(source: Union[str, IO],
                 raise e
             with response:
                 if open_info:
-                    open_info.source_file = url
-                    open_info.source_file_date = response.info()['Last-Modified']
+                    open_info.source_file = response.url
+                    open_info.source_file_date = response.headers['Last-Modified']
                     if not open_info.source_file_date:
-                        open_info.source_file_date = response.info()['Date']
-                    open_info.source_file_size = response.info()['Content-Length']
-                    if not base_path:
-                        parts = urlsplit(url)
-                        open_info.base_dir = urlunsplit((parts.scheme, parts.netloc, os.path.dirname(parts.path),
-                                                         parts.query, None))
+                        open_info.source_file_date = response.headers['Date']
+                    open_info.source_file_size = response.headers['Content-Length']
+                    parts = urlsplit(response.url)
+                    open_info.base_path = urlunsplit((parts.scheme, parts.netloc, os.path.dirname(parts.path),
+                                                     parts.query, None))
+                # Auto convert byte stream to
+                byte_reader = response.fp.read
+                response.fp.read = lambda *a: byte_reader(*a).decode(read_codec)
                 yield response.fp
 
         else:

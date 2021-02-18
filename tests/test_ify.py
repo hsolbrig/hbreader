@@ -1,10 +1,11 @@
 import os
 import unittest
 from urllib.error import HTTPError
-from urllib.parse import quote, urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit, urlparse
 
 from avidreader import avid_read, FileInfo, avid_open
 
+github_url_base = "https://raw.githubusercontent.com/hsolbrig/avidreader/master/"
 
 class Stringable:
     def __init__(self, v):
@@ -101,11 +102,28 @@ class AvidReaderTestCase(unittest.TestCase):
     def test_url(self):
         """ Test the URL branches of the process """
         metadata = FileInfo()
-        comps = urlsplit("https://raw.githubusercontent.com/hsolbrig/avid_reader/main/tests/data/test data 1.txt")
-        # (scheme, netloc, url, query, fragment)
-        text_url = urlunsplit( (comps.scheme, comps.netloc, quote(comps.path), comps.query, comps.fragment) )
-        with avid_open(text_url) as f:
+        file_url = github_url_base + 'tests/data/test data 1.txt'
+        with avid_open(file_url, metadata) as f:
             self.assertEqual(self.expected, f.read())
+        with avid_open('test data 1.txt', base_path=metadata.base_path, open_info=metadata.clear()) as f:
+            self.assertEqual(self.expected, f.read())
+        with avid_open('test_8859.txt', base_path=metadata.base_path, read_codec='latin-1') as f:
+            print(f.read())
+
+    def test_metadata_lock(self):
+        """ Quick test to make sure that typos whilst writing the metadata file are intercepted """
+        metadata = FileInfo()
+        metadata.source_file_size = 10
+        with self.assertRaises(AttributeError) as e:
+            metadata.source_file_sizee = 10
+
+    # TODO:
+    @unittest.skip("Test needs to be completed")
+    def test_metadata_values(self):
+        self.assertTrue(False, "File info filled from file")
+        self.assertTrue(False, "URL info comes from header")
+        self.assertTrue(False, "Text info has boilerplate + current date")
+        self.assertTrue(False, "IO comes from file descriptor")
 
 
 if __name__ == '__main__':
