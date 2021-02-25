@@ -1,4 +1,5 @@
 import datetime
+import json
 import os
 import ssl
 import time
@@ -10,6 +11,13 @@ from urllib.parse import urljoin, urlsplit, urlunsplit, quote
 from urllib.request import Request, urlopen
 
 __all__ = ['FileInfo', 'default_str_tester', 'hbopen', 'hbread']
+
+
+class Pathilizer(str):
+
+    def __str__(self):
+        return self._strifier(self)
+
 
 
 @dataclass
@@ -28,11 +36,12 @@ class FileInfo:
         return self
 
     def __setattr__(self, key, value):
+        # As it is sort of easy to mistype some of the variables above, we "lock" the resource
         if getattr(self, '_locked', False) and key not in self.__dict__:
             raise AttributeError(f'No {key} variable')
-        if self.rel_offset and value is not None and key in ('source_file', 'base_path'):
-            return super().__setattr__(key, os.path.relpath(value, self.rel_offset))
-
+        if value is not None and key in ('source_file', 'base_path'):
+            value = Pathilizer(value)
+            value._strifier = lambda s: str(os.path.relpath(s, self.rel_offset)) if self.rel_offset else s
         return super().__setattr__(key, value)
 
 
@@ -63,7 +72,7 @@ def _try_stringify(source: Union[str, bytes, bytearray, IO],
         # File handle
         return None
 
-    # Co-orce everything else into a string
+    # coerce  everything else into a string
     if callable(getattr(source, 'decode', None)):
         # bytes or bytearray
         return source.decode()
@@ -72,12 +81,52 @@ def _try_stringify(source: Union[str, bytes, bytearray, IO],
     return str(source)
 
 
+def _wrapped_close(fp: TextIO) -> None:
+    native_closer = getattr(fp, 'native_closer', None)
+    if native_closer:
+        fp.close = native_closer
+        delattr(fp, 'native_closer')
+    if hasattr(fp, 'native_reader'):
+        fp.read = fp.native_reader
+        delattr(fp, 'native_reader')
+        delattr(fp, 'decoder')
+    fp.close()
+
+
+def _auto_decode(fp: IO, nbytes: Optional[int] = None) -> str:
+    # We have a file opened in binary mode and haven't formally established a decoder.
+    # We may need as many as four bytes to determine the encoding.
+    # TODO: should the BOM (if present) count in nbytes?
+    if not fp.decoder:
+        if nbytes and nbytes < 4:
+            # Nothing we can do if they're asking for less than 4 bytes
+            data = fp.native_reader(nbytes)
+            return data.decode() if data else data
+        # Use the BOM to figure out what is toing on.  If no BOM, we always go to UTF-8
+        bom = fp.native_reader(4)
+        if len(bom) < 4:
+            return bom.decode(fp.decoder if fp.decoder else 'utf-8')
+        fp.decoder = json.detect_encoding(bom)
+        if nbytes is None:
+            return (bom + fp.native_reader()).decode(fp.decoder)
+        else:
+            return (bom + fp.native_reader(nbytes - 4)).decode(fp.decoder)
+    else:
+        return fp.native_reader(nbytes).decode(fp.decoder)
+
+
+
 def _to_textio(fp: IO, mode: str, read_codec: str) -> TextIO:
     if 'b' in mode:
-        # TODO: Duplicate the handle. Replacing the reader could potentially break things
-        native_reader = fp.read
-        fp.read = lambda *a: native_reader(*a).decode(read_codec)
-    return cast(TextIO, fp)
+        fp = cast(TextIO, fp)
+        # TODO: FIx me
+        fp.decoder = read_codec if read_codec != 'utf-8' else None
+        fp.native_reader = fp.read
+        fp.read = lambda *args: _auto_decode(fp, *args)
+    if getattr(fp, 'native_closer', None):
+        fp.native_closer = fp.close
+        fp.close = lambda *a: _wrapped_close(fp)
+    return fp
 
 
 def hbopen(source: Union[str, bytes, bytearray, IO],
@@ -143,7 +192,6 @@ def hbopen(source: Union[str, bytes, bytearray, IO],
                 fname = os.path.abspath(source)
             else:
                 fname = source if os.path.isabs(source) else os.path.abspath(os.path.join(base_path, source))
-            f = None
             f = open(fname, encoding=read_codec)
             if open_info:
                 open_info.source_file = fname
@@ -180,6 +228,7 @@ def hbread(source: Union[str, bytes, bytearray, IO],
     :param base_path: Base to use if source is a relative URL or file name
     :param accept_header: Accept header to use if it turns out to be a URL
     :param is_actual_data: Function to differentiate plain text from URL or file name
+    :param read_codec: decoder to use for non-ascii data
     :return: String represented by the source
     """
     source_as_str = _try_stringify(source, is_actual_data)

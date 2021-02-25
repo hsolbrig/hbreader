@@ -9,6 +9,7 @@ github_url_base = "https://raw.githubusercontent.com/hsolbrig/hbreader/master/"
 
 
 class Stringable:
+    """ Test object that has a string method """
     def __init__(self, v):
         self.v = v
 
@@ -36,9 +37,12 @@ class HBReaderTestCase(unittest.TestCase):
             self.assertEqual(expected, v.read())
         with f() as v:
             self.assertEqual(expected, ''.join(v))
-        self.assertEqual(expected, f().read())
-        self.assertEqual(expected, ''.join(f()))
-
+        v = f()
+        self.assertEqual(expected, v.read())
+        v.close()
+        v = f()
+        self.assertEqual(expected, ''.join(v))
+        v.close()
 
     def test_vanilla_hbread(self):
         """ Test various text options """
@@ -100,10 +104,21 @@ class HBReaderTestCase(unittest.TestCase):
             with hbopen(f) as of:
                 self.assertEqual('Some Text	With weird  ÒtextÓ	And single ÔquotesÕ', hbread(of), metadata)
 
+    def test_auto_detect(self):
+        with hbopen(open(os.path.join(self.data_dir, 'test_utf8.txt'), 'rb')) as f:
+            self.assertEqual('a,é', f.read())
+        with hbopen(open(os.path.join(self.data_dir, 'test_empty.txt'), 'rb')) as f:
+            self.assertEqual('', f.read())
+        with self.assertRaises(UnicodeDecodeError):
+            with hbopen(open(os.path.join(self.data_dir, 'test_utf8.txt'), 'rb')) as f:
+                self.assertEqual('Some Text	With weird  ÒtextÓ	And single ÔquotesÕ', f.read(2))
+
     def test_non_with(self):
         """ Test the non-with branches of the process """
         metadata = FileInfo()
-        self.assertEqual("I'm some friendly test data", hbopen('data/test data 1.txt', metadata).read().strip())
+        f = hbopen('data/test data 1.txt', metadata)
+        self.assertEqual("I'm some friendly test data\n", f.read())
+        f.close()
 
     def test_url(self):
         """ Test the URL branches of the process """
@@ -129,10 +144,24 @@ class HBReaderTestCase(unittest.TestCase):
             metadata = FileInfo()
             with hbopen(self.data_file, metadata) as f:
                 ...
-            self.assertEqual('hbreader/tests/data', metadata.base_path)
-            self.assertEqual('hbreader/tests/data/test data 1.txt', metadata.source_file)
+            self.assertEqual('hbreader/tests/data',  str(metadata.base_path))
+            self.assertEqual('hbreader/tests/data/test data 1.txt', str(metadata.source_file))
         finally:
             FileInfo.rel_offset = None
+        # Use a rel_offset that *doesn't* resolve to the current situation
+        try:
+            FileInfo.rel_offset = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+            metadata = FileInfo()
+            with hbopen(self.data_file, metadata) as f:
+                self.assertEqual("I'm some friendly test data\n", f.readline())
+            self.assertEqual('tests/data', str(metadata.base_path))
+            self.assertEqual('tests/data/test data 1.txt', str(metadata.source_file))
+        finally:
+            FileInfo.rel_offset = None
+        self.assertNotEqual('hbreader/tests/data', str(metadata.base_path))
+        self.assertTrue(str(metadata.base_path).endswith('hbreader/tests/data'))
+        self.assertNotEqual('hbreader/tests/data/test data 1.txt', str(metadata.source_file))
+        self.assertTrue(str(metadata.source_file), 'hbreader/tests/data/test data 1.txt')
 
     # TODO: Make sure the FileInfo is filled out the way we want it
     @unittest.skip("Test needs to be completed")
