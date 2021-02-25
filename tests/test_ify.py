@@ -1,11 +1,12 @@
 import os
 import unittest
+from typing import TextIO, Callable, Optional
 from urllib.error import HTTPError
-from urllib.parse import quote, urlsplit, urlunsplit, urlparse
 
 from hbreader import hbread, FileInfo, hbopen
 
 github_url_base = "https://raw.githubusercontent.com/hsolbrig/hbreader/master/"
+
 
 class Stringable:
     def __init__(self, v):
@@ -30,9 +31,18 @@ class HBReaderTestCase(unittest.TestCase):
     def data_file(cls, fname: str) -> str:
         return os.path.join(cls.data_dir, fname)
 
-    def test_vanilla_string(self):
-        """ Test plain text options """
-        s = "I'm just some plain text"
+    def line_and_iter_test(self, expected: str, f: Callable[[], TextIO]) -> None:
+        with f() as v:
+            self.assertEqual(expected, v.read())
+        with f() as v:
+            self.assertEqual(expected, ''.join(v))
+        self.assertEqual(expected, f().read())
+        self.assertEqual(expected, ''.join(f()))
+
+
+    def test_vanilla_hbread(self):
+        """ Test various text options """
+        s = "I'm just some plain text\nIn two lines"
 
         self.assertEqual(s, hbread(s), "Read a simple string")
         self.assertEqual(s, hbread(bytes(s, encoding='utf-8')), "Read bytes")
@@ -56,8 +66,7 @@ class HBReaderTestCase(unittest.TestCase):
         s = "   A string w/ \nsome other stuff\r\t."
 
         metadata = FileInfo()
-        with hbopen(s, metadata) as f:
-            self.assertEqual(s, f.read())
+        self.line_and_iter_test(s, lambda: hbopen(s, metadata))
         self.assertEqual(35, metadata.source_file_size)
         metadata.clear()
         self.assertEqual(s, hbread(s, metadata))
@@ -66,7 +75,7 @@ class HBReaderTestCase(unittest.TestCase):
     def test_file_name(self):
         """ Test file open path of hbopen and read"""
         metadata = FileInfo()
-        self.assertEqual(self.expected, hbread(self.data_file, metadata))
+        self.assertEqual(self.expected, hbread(self.data_file, metadata.clear()))
         self.assertTrue(metadata.source_file.endswith('/tests/data/test data 1.txt'), "file read works")
         self.assertTrue(metadata.base_path.endswith('/tests/data'))
         self.assertEqual(28, metadata.source_file_size)
@@ -78,9 +87,7 @@ class HBReaderTestCase(unittest.TestCase):
         self.assertIsNone(metadata.source_file_date)
         self.assertIsNone(metadata.source_file_size)
 
-        with hbopen(self.data_file, metadata) as f:
-            text = f.read()
-        self.assertEqual(self.expected, text)
+        self.line_and_iter_test(self.expected, lambda: hbopen(self.data_file, metadata.clear()))
         metadata2 = FileInfo()
         with hbopen('test data 1.txt', base_path=metadata.base_path, open_info=metadata2) as f:
             self.assertEqual(self.expected, f.read())
@@ -93,11 +100,10 @@ class HBReaderTestCase(unittest.TestCase):
             with hbopen(f) as of:
                 self.assertEqual('Some Text	With weird  ÒtextÓ	And single ÔquotesÕ', hbread(of), metadata)
 
-    @unittest.skip("Won't work until we get the non-with idiom working")
     def test_non_with(self):
         """ Test the non-with branches of the process """
         metadata = FileInfo()
-        self.assertEqual("I'm some friendly test data", hbopen('data/test data 1.txt', metadata).strip())
+        self.assertEqual("I'm some friendly test data", hbopen('data/test data 1.txt', metadata).read().strip())
 
     def test_url(self):
         """ Test the URL branches of the process """

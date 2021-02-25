@@ -1,10 +1,9 @@
 import datetime
 import os
 import time
-from contextlib import contextmanager
 from dataclasses import dataclass
 from io import StringIO
-from typing import Union, Optional, Callable, IO, Any, TextIO, cast, ClassVar
+from typing import Union, Optional, Callable, IO, TextIO, cast, ClassVar
 from urllib.error import HTTPError
 from urllib.parse import urljoin, urlsplit, urlunsplit, quote
 from urllib.request import Request, urlopen
@@ -72,16 +71,15 @@ def _try_stringify(source: Union[str, bytes, bytearray, IO],
     return str(source)
 
 
-def _to_textio(fp: IO, read_codec: str) -> TextIO:
-    if 'b' in fp.mode:
+def _to_textio(fp: IO, mode: str, read_codec: str) -> TextIO:
+    if 'b' in mode:
         # TODO: Duplicate the handle. Replacing the reader could potentially break things
         native_reader = fp.read
         fp.read = lambda *a: native_reader(*a).decode(read_codec)
     return cast(TextIO, fp)
 
 
-@contextmanager
-def hbopen(source: Union[str, IO],
+def hbopen(source: Union[str, bytes, bytearray, IO],
            open_info: Optional[FileInfo] = None,
            base_path: Optional[str] = None,
            accept_header: Optional[str] = None,
@@ -104,8 +102,7 @@ def hbopen(source: Union[str, IO],
             open_info.source_file_size = len(source_as_str)
             open_info.source_file_date = str(datetime.datetime.now())
             open_info.base_path = ""
-        yield StringIO(source_as_str)
-        return
+        return StringIO(source_as_str)
 
     if isinstance(source, str):
         # source is a URL or a file name
@@ -127,18 +124,17 @@ def hbopen(source: Union[str, IO],
                 # This is here because the message out of urllib doesn't include the file name
                 e.msg = f"{e.filename}"
                 raise e
-            with response:
-                if open_info:
-                    open_info.source_file = response.url
-                    open_info.source_file_date = response.headers['Last-Modified']
-                    if not open_info.source_file_date:
-                        open_info.source_file_date = response.headers['Date']
-                    open_info.source_file_size = response.headers['Content-Length']
-                    parts = urlsplit(response.url)
-                    open_info.base_path = urlunsplit((parts.scheme, parts.netloc, os.path.dirname(parts.path),
-                                                     parts.query, None))
-                # Auto convert byte stream to
-                yield _to_textio(response.fp, read_codec)
+            if open_info:
+                open_info.source_file = response.url
+                open_info.source_file_date = response.headers['Last-Modified']
+                if not open_info.source_file_date:
+                    open_info.source_file_date = response.headers['Date']
+                open_info.source_file_size = response.headers['Content-Length']
+                parts = urlsplit(response.url)
+                open_info.base_path = urlunsplit((parts.scheme, parts.netloc, os.path.dirname(parts.path),
+                                                 parts.query, None))
+            # Auto convert byte stream to
+            return _to_textio(response, response.fp.mode, read_codec)
 
         else:
             # source is a file name
@@ -147,18 +143,15 @@ def hbopen(source: Union[str, IO],
             else:
                 fname = source if os.path.isabs(source) else os.path.abspath(os.path.join(base_path, source))
             f = None
-            try:
-                f = open(fname, encoding=read_codec)
-                if open_info:
-                    open_info.source_file = fname
-                    fstat = os.fstat(f.fileno())
-                    open_info.source_file_date = time.ctime(fstat.st_mtime)
-                    open_info.source_file_size = fstat.st_size
-                    open_info.base_path = os.path.dirname(fname)
-                yield _to_textio(f, read_codec)
-            finally:
-                if f is not None:
-                    f.close()
+            f = open(fname, encoding=read_codec)
+            if open_info:
+                open_info.source_file = fname
+                fstat = os.fstat(f.fileno())
+                open_info.source_file_date = time.ctime(fstat.st_mtime)
+                open_info.source_file_size = fstat.st_size
+                open_info.base_path = os.path.dirname(fname)
+            return _to_textio(f, f.mode, read_codec)
+
     else:
         # Source is an open file handle
         if open_info:
@@ -170,10 +163,10 @@ def hbopen(source: Union[str, IO],
             else:
                 open_info.source_file_date = str(datetime.datetime.now())
             open_info.base_path = os.path.dirname(source.name)
-        yield _to_textio(source, read_codec)
+        return _to_textio(source, source.mode, read_codec)
 
 
-def hbread(source: Union[str, IO],
+def hbread(source: Union[str, bytes, bytearray, IO],
            open_info: Optional[FileInfo] = None,
            base_path: Optional[str] = None,
            accept_header: Optional[str] = None,

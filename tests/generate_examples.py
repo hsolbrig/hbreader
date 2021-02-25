@@ -82,6 +82,15 @@ with hbopen(some_text, metadata.clear()) as f:
 #
 # The honey badger has been referred to by the Guiness Book of World Records as the most fearless animal in the animal kingdom. It really doesn't give a shit. If it's hungry, it's hungry.
 
+# hbopen doesn't require 'with'
+f = hbopen('l1\nl2\nl3\n')
+for l in f:
+    print(l, end='')
+f.close()
+# l1
+# l2
+# l3
+
 
 # hpread returns the content rather than a file handle
 print(hbread('test_8859.txt', base_path=data_file_dir, read_codec='latin-1'))
