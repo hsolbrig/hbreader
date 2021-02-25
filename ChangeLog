@@ -1,6 +1,13 @@
 CHANGES
 =======
 
+* Fix for issue #3 and issue #4
+* Add scripts for starting and stopping the docker image
+* Fix issue #1 Fix issue #6 and first shot at issue #1
+* Fix issue #1
+* Fix issue #7
+* Tweak the badges
+* Add empty requirements files
 * First official release
 * Checkpoint
 * Initial commit

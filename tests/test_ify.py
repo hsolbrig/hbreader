@@ -18,18 +18,18 @@ class Stringable:
 
 
 class HBReaderTestCase(unittest.TestCase):
-    data_dir = 'data'
+    data_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data'))
     data_file = None
     expected = None
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.data_file = cls.data_file('test data 1.txt')
+        cls.data_file = cls.input_file('test data 1.txt')
         with open(cls.data_file) as f:
             cls.expected = f.read()
 
     @classmethod
-    def data_file(cls, fname: str) -> str:
+    def input_file(cls, fname: str) -> str:
         return os.path.join(cls.data_dir, fname)
 
     def line_and_iter_test(self, expected: str, f: Callable[[], TextIO]) -> None:
@@ -116,7 +116,7 @@ class HBReaderTestCase(unittest.TestCase):
     def test_non_with(self):
         """ Test the non-with branches of the process """
         metadata = FileInfo()
-        f = hbopen('data/test data 1.txt', metadata)
+        f = hbopen(self.input_file('test data 1.txt'), metadata)
         self.assertEqual("I'm some friendly test data\n", f.read())
         f.close()
 
