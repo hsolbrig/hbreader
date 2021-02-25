@@ -4,19 +4,67 @@ import os
 import ssl
 import time
 from dataclasses import dataclass
+from enum import Enum
 from io import StringIO
 from typing import Union, Optional, Callable, IO, TextIO, cast, ClassVar
 from urllib.error import HTTPError
 from urllib.parse import urljoin, urlsplit, urlunsplit, quote
 from urllib.request import Request, urlopen
 
-__all__ = ['FileInfo', 'default_str_tester', 'hbopen', 'hbread']
+__all__ = ['FileInfo', 'default_str_tester', 'hbopen', 'hbread', 'HB_TYPE', 'HBType', 'detect_type',
+           'default_str_tester']
+
+# Honey Badger reader recognizes all of the below PLUS "Stringifiable" -- any object that can convert into a string
+HB_TYPE = Union[str, bytes, bytearray, IO]
 
 
 class Pathilizer(str):
 
     def __str__(self):
         return self._strifier(self)
+
+
+class HBType(Enum):
+    URL = "url"
+    STRING = "string"
+    DECODABLE = "decodable"
+    FILENAME = "filename"
+    IO = "filehandle"
+    STRINGABLE = "stringable"
+
+
+def default_str_tester(s: str) -> bool:
+    """
+    Default test whether s URL, file name or just data.  This is pretty simple - if it has a c/r, a quote
+    :param s: string to test
+    :return: True if this is a vanilla string, otherwise try to treat it as a file name
+    """
+    return not s.strip() or any(c in s for c in ['\r', '\n', '\t', '  ', '"', "'"])
+
+
+def detect_type(source: HB_TYPE,
+                base_path: Optional[str] = None,
+                is_actual_data: Optional[Callable[[str], bool]] = default_str_tester) -> HBType:
+    """
+    Determine the actual type of source
+    :param source: element to be typed
+    :param base_path: base path if relative file or URL
+    :param is_actual_data: function to differentiate data from URL/file (default: default_st_tester)
+    :return: actual type
+    """
+    if isinstance(source, str):
+        return HBType.STRING if is_actual_data(source) else\
+               HBType.URL if '://' in source or (base_path and '://' in base_path) else\
+               HBType.FILENAME
+
+    if callable(getattr(source, 'read', None)):
+        return HBType.IO
+
+    if callable(getattr(source, 'decode', None)):
+        return HBType.DECODABLE
+
+    # str-able
+    return HBType.STRINGABLE
 
 
 @dataclass
@@ -42,42 +90,6 @@ class FileInfo:
             value = Pathilizer(value)
             value._strifier = lambda s: str(os.path.relpath(s, self.rel_offset)) if self.rel_offset else s
         return super().__setattr__(key, value)
-
-
-def default_str_tester(s: str) -> bool:
-    """
-    Default test whether s URL, file name or just data.  This is pretty simple - if it has a c/r, a quote
-    :param s: string to test
-    :return: True if this is a vanilla string, otherwise try to treat it as a file name
-    """
-    return not s.strip() or any(c in s for c in ['\r', '\n', '\t', '  ', '"', "'"])
-
-
-def _try_stringify(source: Union[str, bytes, bytearray, IO],
-                   is_actual_data: Optional[Callable[[str], bool]]) -> Optional[str]:
-    """
-    Handle all forms of string being passed directly
-
-    :param source: The element to decode
-    :param is_actual_data: Function to differentiate text from URL or file name
-    :return: string form if source was string to begin with
-    """
-
-    if isinstance(source, str):
-        # Vanilla non-URL, non-File string
-        return source if is_actual_data(source) else None
-
-    if callable(getattr(source, 'read', None)):
-        # File handle
-        return None
-
-    # coerce  everything else into a string
-    if callable(getattr(source, 'decode', None)):
-        # bytes or bytearray
-        return source.decode()
-
-    # str-able
-    return str(source)
 
 
 def _wrapped_close(fp: TextIO) -> None:
@@ -114,7 +126,6 @@ def _auto_decode(fp: IO, nbytes: Optional[int] = None) -> str:
         return fp.native_reader(nbytes).decode(fp.decoder)
 
 
-
 def _to_textio(fp: IO, mode: str, read_codec: str) -> TextIO:
     if 'b' in mode:
         fp = cast(TextIO, fp)
@@ -128,7 +139,7 @@ def _to_textio(fp: IO, mode: str, read_codec: str) -> TextIO:
     return fp
 
 
-def hbopen(source: Union[str, bytes, bytearray, IO],
+def hbopen(source: HB_TYPE,
            open_info: Optional[FileInfo] = None,
            base_path: Optional[str] = None,
            accept_header: Optional[str] = None,
@@ -144,64 +155,64 @@ def hbopen(source: Union[str, bytes, bytearray, IO],
     :param read_codec: Name of codec to use if bytes being read. (URL only)
     :return: TextIO representation of open file
     """
-    source_as_str = _try_stringify(source, is_actual_data)
-    if source_as_str is not None:
-        if open_info:
-            open_info.source_file = ""
-            open_info.source_file_size = len(source_as_str)
-            open_info.source_file_date = str(datetime.datetime.now())
-            open_info.base_path = ""
-        return StringIO(source_as_str)
+    source_type = detect_type(source, base_path, is_actual_data)
+    if source_type is HBType.STRINGABLE:
+        source_as_string = str(source)
+    elif source_type is HBType.DECODABLE:
+        # TODO: Tie this into the autodetect machinery
+        source_as_string = source.decode()
+    elif source_type is HBType.STRING:
+        source_as_string = source
+    else:
+        source_as_string = None
 
-    if isinstance(source, str):
-        # source is a URL or a file name
+    # source is a URL or a file name
+    if source_as_string:
         if open_info:
             assert open_info.source_file is None, "source_file parameter not allowed if data is a file or URL"
             assert open_info.source_file_date is None, "source_file_date parameter not allowed if data is a file or URL"
-            assert open_info.source_file_size is None, "source_file_size parameter not allowed if data is a file or URL"
+            open_info.source_file_size = len(source_as_string)
+        return StringIO(source_as_string)
 
-        if '://' in source or (base_path and '://' in base_path):
-            # source is a URL
-            url = source if '://' in source else urljoin(base_path + ('' if base_path.endswith('/') else '/'),
-                                                         source, allow_fragments=True)
-            req = Request(quote(url, '/:'))
-            if accept_header:
-                req.add_header("Accept", accept_header)
-            try:
-                response = urlopen(req, context=ssl._create_unverified_context())
-            except HTTPError as e:
-                # This is here because the message out of urllib doesn't include the file name
-                e.msg = f"{e.filename}"
-                raise e
-            if open_info:
-                open_info.source_file = response.url
-                open_info.source_file_date = response.headers['Last-Modified']
-                if not open_info.source_file_date:
-                    open_info.source_file_date = response.headers['Date']
-                open_info.source_file_size = response.headers['Content-Length']
-                parts = urlsplit(response.url)
-                open_info.base_path = urlunsplit((parts.scheme, parts.netloc, os.path.dirname(parts.path),
-                                                 parts.query, None))
-            # Auto convert byte stream to
-            return _to_textio(response, response.fp.mode, read_codec)
+    if source_type is HBType.URL:
+        url = source if '://' in source else urljoin(base_path + ('' if base_path.endswith('/') else '/'),
+                                                     source, allow_fragments=True)
+        req = Request(quote(url, '/:'))
+        if accept_header:
+            req.add_header("Accept", accept_header)
+        try:
+            response = urlopen(req, context=ssl._create_unverified_context())
+        except HTTPError as e:
+            # This is here because the message out of urllib doesn't include the file name
+            e.msg = f"{e.filename}"
+            raise e
+        if open_info:
+            open_info.source_file = response.url
+            open_info.source_file_date = response.headers['Last-Modified']
+            if not open_info.source_file_date:
+                open_info.source_file_date = response.headers['Date']
+            open_info.source_file_size = response.headers['Content-Length']
+            parts = urlsplit(response.url)
+            open_info.base_path = urlunsplit((parts.scheme, parts.netloc, os.path.dirname(parts.path),
+                                             parts.query, None))
+        # Auto convert byte stream to
+        return _to_textio(response, response.fp.mode, read_codec)
 
+    if source_type is HBType.FILENAME:
+        if not base_path:
+            fname = os.path.abspath(source)
         else:
-            # source is a file name
-            if not base_path:
-                fname = os.path.abspath(source)
-            else:
-                fname = source if os.path.isabs(source) else os.path.abspath(os.path.join(base_path, source))
-            f = open(fname, encoding=read_codec if read_codec else 'utf-8')
-            if open_info:
-                open_info.source_file = fname
-                fstat = os.fstat(f.fileno())
-                open_info.source_file_date = time.ctime(fstat.st_mtime)
-                open_info.source_file_size = fstat.st_size
-                open_info.base_path = os.path.dirname(fname)
-            return _to_textio(f, f.mode, read_codec)
+            fname = source if os.path.isabs(source) else os.path.abspath(os.path.join(base_path, source))
+        f = open(fname, encoding=read_codec if read_codec else 'utf-8')
+        if open_info:
+            open_info.source_file = fname
+            fstat = os.fstat(f.fileno())
+            open_info.source_file_date = time.ctime(fstat.st_mtime)
+            open_info.source_file_size = fstat.st_size
+            open_info.base_path = os.path.dirname(fname)
+        return _to_textio(f, f.mode, read_codec)
 
-    else:
-        # Source is an open file handle
+    if source_type is HBType.IO:
         if open_info:
             open_info.source_file = source.name
             if getattr(source, 'fileno', None):
@@ -213,8 +224,10 @@ def hbopen(source: Union[str, bytes, bytearray, IO],
             open_info.base_path = os.path.dirname(source.name)
         return _to_textio(source, source.mode, read_codec)
 
+    raise AssertionError("Programming error in file type detection logic")
 
-def hbread(source: Union[str, bytes, bytearray, IO],
+
+def hbread(source: HB_TYPE,
            open_info: Optional[FileInfo] = None,
            base_path: Optional[str] = None,
            accept_header: Optional[str] = None,
@@ -230,10 +243,19 @@ def hbread(source: Union[str, bytes, bytearray, IO],
     :param read_codec: decoder to use for non-ascii data
     :return: String represented by the source
     """
-    source_as_str = _try_stringify(source, is_actual_data)
-    if source_as_str is not None:
+    source_type = detect_type(source, base_path, is_actual_data)
+    if source_type is HBType.STRINGABLE:
+        source_as_string = str(source)
+    elif source_type is HBType.DECODABLE:
+        # TODO: Tie this into the autodetect machinery
+        source_as_string = source.decode()
+    elif source_type is HBType.STRING:
+        source_as_string = source
+    else:
+        source_as_string = None
+    if source_as_string:
         if open_info:
             open_info.source_file_size = len(source)
-        return source_as_str
+        return source_as_string
     with hbopen(source, open_info, base_path, accept_header, is_actual_data, read_codec) as f:
         return f.read()
