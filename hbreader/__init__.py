@@ -1,5 +1,6 @@
 import datetime
 import os
+import ssl
 import time
 from dataclasses import dataclass
 from io import StringIO
@@ -119,7 +120,7 @@ def hbopen(source: Union[str, bytes, bytearray, IO],
             if accept_header:
                 req.add_header("Accept", accept_header)
             try:
-                response = urlopen(req)
+                response = urlopen(req, context=ssl._create_unverified_context())
             except HTTPError as e:
                 # This is here because the message out of urllib doesn't include the file name
                 e.msg = f"{e.filename}"
