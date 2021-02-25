@@ -1,16 +1,27 @@
 # Docker test server
-This docker image serves whatever is in the html directory through ports 8000 (http:) and 8443 (https:).  We use
+This docker image serves whatever is in the html directory through ports 8100 (http:) and 8543 (https:).  We use
 it to test the Honey Badger's ability to ignore SSL certificates (HB Don't care)
 
 ## Starting the docker web server
 ```bash
 > cd tests/server
-> docker image build . -t hb_server
-> docker run -it --rm -d -p 8100:80 -p 8543:443 --name hb_server -v `pwd`/html/:/usr/share/nginx/html hb_server 
+> ./db.sh
+Step 9/9 : EXPOSE 80 443
+ ---> Using cache
+ ---> 19c5600029ca
+Successfully built 19c5600029ca
+Successfully tagged hb_server:latest
+>
+# Edit the port assignments in dr.sh if 8100 or 8543 are in use
+> ./dr.sh 
+06a8e67bad5887a3300c8c1710615ea0328d478c5b361c33e60e8b8869eaa964
+>
 # After you finished testing
-> docker stop hb_server
+> ./ds.sh
+hb_server
+>
 ```
-To test that the server is running:5
+To test that the server is running:
 ```bash
 > curl -k https://localhost:8543/schema.context.jsonld
 {

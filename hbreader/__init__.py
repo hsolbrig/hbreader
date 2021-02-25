@@ -19,7 +19,6 @@ class Pathilizer(str):
         return self._strifier(self)
 
 
-
 @dataclass
 class FileInfo:
     source_file: Optional[str] = None
@@ -120,7 +119,7 @@ def _to_textio(fp: IO, mode: str, read_codec: str) -> TextIO:
     if 'b' in mode:
         fp = cast(TextIO, fp)
         # TODO: FIx me
-        fp.decoder = read_codec if read_codec != 'utf-8' else None
+        fp.decoder = read_codec
         fp.native_reader = fp.read
         fp.read = lambda *args: _auto_decode(fp, *args)
     if getattr(fp, 'native_closer', None):
@@ -134,7 +133,7 @@ def hbopen(source: Union[str, bytes, bytearray, IO],
            base_path: Optional[str] = None,
            accept_header: Optional[str] = None,
            is_actual_data: Optional[Callable[[str], bool]] = default_str_tester,
-           read_codec: str = 'utf-8') -> TextIO:
+           read_codec: str = None) -> TextIO:
     """
     Return an open IO representation of source
     :param source: anything that can be construed to be a string, a URL, a file name or an open file handle
@@ -142,7 +141,7 @@ def hbopen(source: Union[str, bytes, bytearray, IO],
     :param base_path: Base to use if source is a relative URL or file name
     :param accept_header: Accept header to use if it turns out to be a URL
     :param is_actual_data: Function to differentiate plain text from URL or file name
-    :param read_codec: Name of codec to use if bytes being read (default = 'utf-8'). (URL only)
+    :param read_codec: Name of codec to use if bytes being read. (URL only)
     :return: TextIO representation of open file
     """
     source_as_str = _try_stringify(source, is_actual_data)
@@ -192,7 +191,7 @@ def hbopen(source: Union[str, bytes, bytearray, IO],
                 fname = os.path.abspath(source)
             else:
                 fname = source if os.path.isabs(source) else os.path.abspath(os.path.join(base_path, source))
-            f = open(fname, encoding=read_codec)
+            f = open(fname, encoding=read_codec if read_codec else 'utf-8')
             if open_info:
                 open_info.source_file = fname
                 fstat = os.fstat(f.fileno())
@@ -220,7 +219,7 @@ def hbread(source: Union[str, bytes, bytearray, IO],
            base_path: Optional[str] = None,
            accept_header: Optional[str] = None,
            is_actual_data: Optional[Callable[[str], bool]] = default_str_tester,
-           read_codec: str = 'utf-8') -> str:
+           read_codec: str = None) -> str:
     """
     Return the string represented by source
     :param source: anything that can be construed to be a string, a URL, a file name or an open file handle
